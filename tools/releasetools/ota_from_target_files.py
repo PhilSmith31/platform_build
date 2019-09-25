@@ -124,10 +124,6 @@ Usage:  ota_from_target_files [flags] input_target_files output_ota_package
 
   --payload_signer_args <args>
       Specify the arguments needed for payload signer.
-
-  --backup <boolean>
-      Enable or disable the execution of backuptool.sh.
-      Disabled by default.
 """
 
 import sys
@@ -178,8 +174,6 @@ OPTIONS.gen_verify = False
 OPTIONS.log_diff = None
 OPTIONS.payload_signer = None
 OPTIONS.payload_signer_args = []
-OPTIONS.backuptool = False
-OPTIONS.override_device = 'auto'
 
 def MostPopularKey(d, default):
   """Given a dict, return the key corresponding to the largest
@@ -460,10 +454,7 @@ def SignOutput(temp_zip_name, output_zip_name):
 def AppendAssertions(script, info_dict, oem_dict=None):
   oem_props = info_dict.get("oem_fingerprint_properties")
   if oem_props is None or len(oem_props) == 0:
-    if OPTIONS.override_device == "auto":
-      device = GetBuildProp("ro.product.device", info_dict)
-    else:
-      device = OPTIONS.override_device
+    device = GetBuildProp("ro.product.device", info_dict)
     script.AssertDevice(device)
   else:
     if oem_dict is None:
@@ -577,14 +568,6 @@ def GetImage(which, tmpdir, info_dict):
   return sparse_img.SparseImage(path, mappath, clobbered_blocks)
 
 
-def CopyInstallTools(output_zip):
-  install_path = os.path.join(OPTIONS.input_tmp, "INSTALL")
-  for root, subdirs, files in os.walk(install_path):
-     for f in files:
-      install_source = os.path.join(root, f)
-      install_target = os.path.join("install", os.path.relpath(root, install_path), f)
-      output_zip.write(install_source, install_target)
-
 def WriteFullOTAPackage(input_zip, output_zip):
   # TODO: how to determine this?  We don't know what version it will
   # be installed on top of. For now, we expect the API just won't
@@ -625,10 +608,10 @@ def WriteFullOTAPackage(input_zip, output_zip):
 
   metadata["ota-type"] = "BLOCK" if block_based else "FILE"
 
-  #if not OPTIONS.omit_prereq:
-  #  ts = GetBuildProp("ro.build.date.utc", OPTIONS.info_dict)
-  #  ts_text = GetBuildProp("ro.build.date", OPTIONS.info_dict)
-  #  script.AssertOlderBuild(ts, ts_text)
+  if not OPTIONS.omit_prereq:
+    ts = GetBuildProp("ro.build.date.utc", OPTIONS.info_dict)
+    ts_text = GetBuildProp("ro.build.date", OPTIONS.info_dict)
+    script.AssertOlderBuild(ts, ts_text)
 
   AppendAssertions(script, OPTIONS.info_dict, oem_dict)
   device_specific.FullOTA_Assertions()
@@ -679,30 +662,11 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
     # Stage 3/3: Make changes.
     script.Comment("Stage 3/3")
 
-  script.Print("      _____  ___________")
-  script.Print("  __ / / _ \/ ___/_  __/__ ___ ___ _  ")
-  script.Print(" / // / // / /__  / / / -_) _ `/  ' \ ")
-  script.Print(" \___/____/\___/ /_/  \__/\_,_/_/_/_/ ")
-  script.Print(" ")
-  script.Print("The Android Open Source Project 7.1.2")
-  script.Print(" ")
-  script.AppendExtra("sleep (2);")
-  script.AppendExtra("ifelse(is_mounted(\"/system\"), unmount(\"/system\"));")
+  # Dump fingerprints
+  script.Print("Target: %s" % CalculateFingerprint(
+      oem_props, oem_dict, OPTIONS.info_dict))
 
   device_specific.FullOTA_InstallBegin()
-
-  CopyInstallTools(output_zip)
-  script.UnpackPackageDir("install", "/tmp/install")
-  script.SetPermissionsRecursive("/tmp/install", 0, 0, 0755, 0644, None, None)
-  script.SetPermissionsRecursive("/tmp/install/bin", 0, 0, 0755, 0755, None, None)
-  script.SetPermissionsRecursive("/tmp/install/etc", 0, 0, 0755, 0755, None, None)
-
-  if OPTIONS.backuptool:
-    script.Mount("/system")
-    script.Print("BackupTools: starting backup script")
-    script.RunBackup("backup")
-    script.Print("BackupTools: DONE! Now real installation will begin")
-    script.Unmount("/system")
 
   system_progress = 0.75
 
@@ -731,19 +695,13 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
     system_diff = common.BlockDifference("system", system_tgt, src=None)
     system_diff.WriteScript(script, output_zip)
   else:
-    script.Print("Formatting /system...");
-    script.AppendExtra("run_program(\"/tmp/install/bin/format.sh\");")
-    script.Print("Mounting /system...");
-    script.Mount("/system")
-    script.Print("Installing...");
+    script.FormatPartition("/system")
+    script.Mount("/system", recovery_mount_options)
     if not has_recovery_patch:
       script.UnpackPackageDir("recovery", "/system")
     script.UnpackPackageDir("system", "/system")
 
-    device_specific.FullOTA_CustomAsserts()
-
     symlinks = CopyPartitionFiles(system_items, input_zip, output_zip)
-    script.Print("Making symlinks...");
     script.MakeSymlinks(symlinks)
 
   boot_img = common.GetBootableImage(
@@ -783,18 +741,6 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
   common.CheckSize(boot_img.data, "boot.img", OPTIONS.info_dict)
   common.ZipWriteStr(output_zip, "boot.img", boot_img.data)
 
-  device_specific.FullOTA_PostValidate()
-
-  if OPTIONS.backuptool:
-    script.ShowProgress(0.02, 10)
-    if block_based:
-      script.Mount("/system")
-    script.Print("BackupTools: Restoring backup")
-    script.RunBackup("restore")
-    script.Print("BackupTools: DONE!")
-    if block_based:
-      script.Unmount("/system")
-
   script.ShowProgress(0.05, 5)
   script.WriteRawImage("/boot", "boot.img")
 
@@ -803,23 +749,8 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
 
   if OPTIONS.extra_script is not None:
     script.AppendExtra(OPTIONS.extra_script)
-  script.UnmountAll()
 
-  if OPTIONS.info_dict.get("with_root") == "true":
-    #Magisk
-    script.Print("Extracting Magisk...");
-    script.AppendExtra('package_extract_dir("install/magisk", "/tmp/magisk");')
-    script.AppendExtra('run_program("/sbin/busybox", "unzip", "/tmp/magisk/Magisk.zip", "META-INF/com/google/android/update-binary", "-d", "/tmp/magisk");')
-    script.Print("Installing Magisk...");
-    script.AppendExtra('run_program("/sbin/busybox", "sh", "/tmp/magisk/META-INF/com/google/android/update-binary", "null", "1", "/tmp/magisk/Magisk.zip");')
-    script.Print("Cleaning up...");
-    script.AppendExtra('delete_recursive("/tmp/magisk");')
-    script.Print("Installation Complete!");
-  else:
-    script.Print(" ");
-    script.Print("ROM does not have any root method");
-    script.Print(" ");
-    script.Print("Installation complete!");
+  script.UnmountAll()
 
   if OPTIONS.wipe_user_data:
     script.ShowProgress(0.1, 10)
@@ -847,8 +778,6 @@ endif;
   metadata["ota-required-cache"] = str(script.required_cache)
   WriteMetadata(metadata, output_zip)
 
-  common.ZipWriteStr(output_zip, "system/build.prop",
-                     ""+input_zip.read("SYSTEM/build.prop"))
 
 def WritePolicyConfig(file_name, output_zip):
   common.ZipWrite(output_zip, file_name, os.path.basename(file_name))
@@ -950,9 +879,7 @@ def WriteBlockIncrementalOTAPackage(target_zip, source_zip, output_zip):
       source_zip=source_zip,
       source_version=source_version,
       target_zip=target_zip,
-      input_zip=target_zip,
       target_version=target_version,
-      input_version=target_version,
       output_zip=output_zip,
       script=script,
       metadata=metadata,
@@ -1357,6 +1284,11 @@ def WriteABOTAPackageWithBrilloScript(target_file, output_file,
          "--target_image", target_file]
   if source_file is not None:
     cmd.extend(["--source_image", source_file])
+  if OPTIONS.downgrade:
+    max_timestamp = GetBuildProp("ro.build.date.utc", OPTIONS.source_info_dict)
+  else:
+    max_timestamp = metadata["post-timestamp"]
+  cmd.extend(["--max_timestamp", max_timestamp])
   p1 = common.Run(cmd, stdout=subprocess.PIPE)
   p1.wait()
   assert p1.returncode == 0, "brillo_update_payload generate failed"
@@ -1537,7 +1469,7 @@ class FileDifference(object):
     so_far = 0
     for tf, sf, _, _ in self.patch_list:
       if tf.name != sf.name:
-        script.SkipNextActionIfTargetExists("/" + tf.name, tf.sha1)
+        script.SkipNextActionIfTargetExists(tf.name, tf.sha1)
       script.PatchCheck("/"+sf.name, tf.sha1, sf.sha1)
       so_far += sf.size
     return so_far
@@ -1569,7 +1501,7 @@ class FileDifference(object):
         deferred_patch_list.append(item)
         continue
       if sf.name != tf.name:
-        script.SkipNextActionIfTargetExists("/" + tf.name, tf.sha1)
+        script.SkipNextActionIfTargetExists(tf.name, tf.sha1)
       script.ApplyPatch("/" + sf.name, "-", tf.size, tf.sha1, sf.sha1,
                         "patch/" + sf.name + ".p")
       so_far += tf.size
@@ -1653,9 +1585,7 @@ def WriteIncrementalOTAPackage(target_zip, source_zip, output_zip):
       source_zip=source_zip,
       source_version=source_version,
       target_zip=target_zip,
-      input_zip=target_zip,
       target_version=target_version,
-      input_version=target_version,
       output_zip=output_zip,
       script=script,
       metadata=metadata,
@@ -1760,10 +1690,8 @@ else if get_stage("%(bcb_dev)s") != "3/3" then
     script.Comment("Stage 1/3")
 
   # Dump fingerprints
-  script.Print("Source: %s" % CalculateFingerprint(
-      oem_props, oem_dict, OPTIONS.source_info_dict))
-  script.Print("Target: %s" % CalculateFingerprint(
-      oem_props, oem_dict, OPTIONS.target_info_dict))
+  script.Print("Source: %s" % (source_fp,))
+  script.Print("Target: %s" % (target_fp,))
 
   script.Print("Verifying current system...")
 
@@ -1782,24 +1710,20 @@ else if get_stage("%(bcb_dev)s") != "3/3" then
       size.append(vendor_diff.largest_source_size)
 
   if updating_boot:
-    boot_type, boot_device = common.GetTypeAndDevice("/boot", OPTIONS.info_dict)
     d = common.Difference(target_boot, source_boot)
     _, _, d = d.ComputePatch()
-    if d is None:
-      include_full_boot = True
-      common.ZipWriteStr(output_zip, "boot.img", target_boot.data)
-    else:
-      include_full_boot = False
-
-      print "boot      target: %d  source: %d  diff: %d" % (
+    print "boot      target: %d  source: %d  diff: %d" % (
         target_boot.size, source_boot.size, len(d))
 
-      common.ZipWriteStr(output_zip, "patch/boot.img.p", d)
+    common.ZipWriteStr(output_zip, "patch/boot.img.p", d)
 
-      script.PatchCheck("%s:%s:%d:%s:%d:%s" %
-                        (boot_type, boot_device,
-                         source_boot.size, source_boot.sha1,
-                         target_boot.size, target_boot.sha1))
+    boot_type, boot_device = common.GetTypeAndDevice(
+        "/boot", OPTIONS.source_info_dict)
+
+    script.PatchCheck("%s:%s:%d:%s:%d:%s" %
+                      (boot_type, boot_device,
+                       source_boot.size, source_boot.sha1,
+                       target_boot.size, target_boot.sha1))
     so_far += source_boot.size
     size.append(target_boot.size)
 
@@ -1850,23 +1774,20 @@ else
 
   if not OPTIONS.two_step:
     if updating_boot:
-      if include_full_boot:
-        print "boot image changed; including full."
-        script.Print("Installing boot image...")
-        script.WriteRawImage("/boot", "boot.img")
-      else:
-        # Produce the boot image by applying a patch to the current
-        # contents of the boot partition, and write it back to the
-        # partition.
-        print "boot image changed; including patch."
-        script.Print("Patching boot image...")
-        script.ApplyPatch("%s:%s:%d:%s:%d:%s"
-                          % (boot_type, boot_device,
-                             source_boot.size, source_boot.sha1,
-                             target_boot.size, target_boot.sha1),
-                          "-",
-                          target_boot.size, target_boot.sha1,
-                          source_boot.sha1, "patch/boot.img.p")
+      # Produce the boot image by applying a patch to the current
+      # contents of the boot partition, and write it back to the
+      # partition.
+      script.Print("Patching boot image...")
+      script.ApplyPatch("%s:%s:%d:%s:%d:%s"
+                        % (boot_type, boot_device,
+                           source_boot.size, source_boot.sha1,
+                           target_boot.size, target_boot.sha1),
+                        "-",
+                        target_boot.size, target_boot.sha1,
+                        source_boot.sha1, "patch/boot.img.p")
+      so_far += target_boot.size
+      script.SetProgress(so_far / total_patch_size)
+      print "boot image changed; including."
     else:
       print "boot image unchanged; skipping."
 
@@ -2084,8 +2005,6 @@ def main(argv):
       OPTIONS.updater_binary = a
     elif o in ("--no_fallback_to_full",):
       OPTIONS.fallback_to_full = False
-    elif o in ("--backup"):
-      OPTIONS.backuptool = True
     elif o == "--stash_threshold":
       try:
         OPTIONS.stash_threshold = float(a)
@@ -2100,8 +2019,6 @@ def main(argv):
       OPTIONS.payload_signer = a
     elif o == "--payload_signer_args":
       OPTIONS.payload_signer_args = shlex.split(a)
-    elif o in ("--backup"):
-      OPTIONS.backuptool = True
     else:
       return False
     return True
@@ -2133,7 +2050,6 @@ def main(argv):
                                  "log_diff=",
                                  "payload_signer=",
                                  "payload_signer_args=",
-                                 "backup="
                              ], extra_option_handler=option_handler)
 
   if len(args) != 2:
@@ -2157,9 +2073,6 @@ def main(argv):
   input_zip = zipfile.ZipFile(args[0], "r")
   OPTIONS.info_dict = common.LoadInfoDict(input_zip)
   common.ZipClose(input_zip)
-
-  if "ota_override_device" in OPTIONS.info_dict:
-    OPTIONS.override_device = OPTIONS.info_dict.get("ota_override_device")
 
   ab_update = OPTIONS.info_dict.get("ab_update") == "true"
 

@@ -29,9 +29,12 @@ Environment options:
 Look at the source to view more functions. The complete list is:
 EOF
     T=$(gettop)
+    local A
+    A=""
     for i in `cat $T/build/envsetup.sh | sed -n "/^[[:blank:]]*function /s/function \([a-z_]*\).*/\1/p" | sort | uniq`; do
-      echo "$i"
-    done | column
+      A="$A $i"
+    done
+    echo $A
 }
 
 # Get all the build variables needed by this script in a single call to the build system.
@@ -42,7 +45,7 @@ function build_build_var_cache()
     cached_vars=`cat $T/build/envsetup.sh | tr '()' '  ' | awk '{for(i=1;i<=NF;i++) if($i~/get_build_var/) print $(i+1)}' | sort -u | tr '\n' ' '`
     cached_abs_vars=`cat $T/build/envsetup.sh | tr '()' '  ' | awk '{for(i=1;i<=NF;i++) if($i~/get_abs_build_var/) print $(i+1)}' | sort -u | tr '\n' ' '`
     # Call the build system to dump the "<val>=<value>" pairs as a shell script.
-    build_dicts_script=`\cd $T; export CALLED_FROM_SETUP=true; export BUILD_SYSTEM=build/core; \
+    build_dicts_script=`\cd $T; CALLED_FROM_SETUP=true BUILD_SYSTEM=build/core \
                         command make --no-print-directory -f build/core/config.mk \
                         dump-many-vars \
                         DUMP_MANY_VARS="$cached_vars" \
@@ -71,11 +74,11 @@ function build_build_var_cache()
 function destroy_build_var_cache()
 {
     unset BUILD_VAR_CACHE_READY
-    for v in $(echo $cached_vars | tr " " "\n"); do
+    for v in $cached_vars; do
       unset var_cache_$v
     done
     unset cached_vars
-    for v in $(echo $cached_abs_vars | tr " " "\n"); do
+    for v in $cached_abs_vars; do
       unset abs_var_cache_$v
     done
     unset cached_abs_vars
@@ -95,7 +98,7 @@ function get_abs_build_var()
         echo "Couldn't locate the top of the tree.  Try setting TOP." >&2
         return
     fi
-    (\cd $T; export CALLED_FROM_SETUP=true; export BUILD_SYSTEM=build/core; \
+    (\cd $T; CALLED_FROM_SETUP=true BUILD_SYSTEM=build/core \
       command make --no-print-directory -f build/core/config.mk dumpvar-abs-$1)
 }
 
@@ -113,7 +116,7 @@ function get_build_var()
         echo "Couldn't locate the top of the tree.  Try setting TOP." >&2
         return
     fi
-    (\cd $T; export CALLED_FROM_SETUP=true; export BUILD_SYSTEM=build/core; \
+    (\cd $T; CALLED_FROM_SETUP=true BUILD_SYSTEM=build/core \
       command make --no-print-directory -f build/core/config.mk dumpvar-$1)
 }
 
@@ -125,14 +128,6 @@ function check_product()
         echo "Couldn't locate the top of the tree.  Try setting TOP." >&2
         return
     fi
-
-    if (echo -n $1 | grep -q -e "^jdc_") ; then
-       CUSTOM_BUILD=$(echo -n $1 | sed -e 's/^jdc_//g')
-    else
-       CUSTOM_BUILD=
-    fi
-    export CUSTOM_BUILD
-
         TARGET_PRODUCT=$1 \
         TARGET_BUILD_VARIANT= \
         TARGET_BUILD_TYPE= \
@@ -287,6 +282,7 @@ function set_stuff_for_environment()
     setpaths
     set_sequence_number
 
+    export ANDROID_BUILD_TOP=$(gettop)
     # With this environment variable new GCC can apply colors to warnings/errors
     export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
     export ASAN_OPTIONS=detect_leaks=0
@@ -304,26 +300,11 @@ function settitle()
         local product=$TARGET_PRODUCT
         local variant=$TARGET_BUILD_VARIANT
         local apps=$TARGET_BUILD_APPS
-        if [ -z "$PROMPT_COMMAND"  ]; then
-            # No prompts
-            PROMPT_COMMAND="echo -ne \"\033]0;${USER}@${HOSTNAME}: ${PWD}\007\""
-        elif [ -z "$(echo $PROMPT_COMMAND | grep '033]0;')" ]; then
-            # Prompts exist, but no hardstatus
-            PROMPT_COMMAND="echo -ne \"\033]0;${USER}@${HOSTNAME}: ${PWD}\007\";${PROMPT_COMMAND}"
-        fi
-        if [ ! -z "$ANDROID_PROMPT_PREFIX" ]; then
-            PROMPT_COMMAND="$(echo $PROMPT_COMMAND | sed -e 's/$ANDROID_PROMPT_PREFIX //g')"
-        fi
-
         if [ -z "$apps" ]; then
-            ANDROID_PROMPT_PREFIX="[${arch}-${product}-${variant}]"
+            export PROMPT_COMMAND="echo -ne \"\033]0;[${arch}-${product}-${variant}] ${USER}@${HOSTNAME}: ${PWD}\007\""
         else
-            ANDROID_PROMPT_PREFIX="[$arch $apps $variant]"
+            export PROMPT_COMMAND="echo -ne \"\033]0;[$arch $apps $variant] ${USER}@${HOSTNAME}: ${PWD}\007\""
         fi
-        export ANDROID_PROMPT_PREFIX
-
-        # Inject build data into hardstatus
-        export PROMPT_COMMAND="$(echo $PROMPT_COMMAND | sed -e 's/\\033]0;\(.*\)\\007/\\033]0;$ANDROID_PROMPT_PREFIX \1\\007/g')"
     fi
 }
 
@@ -532,6 +513,14 @@ function add_lunch_combo()
     LUNCH_MENU_CHOICES=(${LUNCH_MENU_CHOICES[@]} $new_combo)
 }
 
+# add the default one here
+add_lunch_combo aosp_arm-eng
+add_lunch_combo aosp_arm64-eng
+add_lunch_combo aosp_mips-eng
+add_lunch_combo aosp_mips64-eng
+add_lunch_combo aosp_x86-eng
+add_lunch_combo aosp_x86_64-eng
+
 function print_lunch_menu()
 {
     local uname=$(uname)
@@ -554,7 +543,6 @@ function print_lunch_menu()
 function lunch()
 {
     local answer
-    LUNCH_MENU_CHOICES=($(for l in ${LUNCH_MENU_CHOICES[@]}; do echo "$l"; done | sort))
 
     if [ "$1" ] ; then
         answer=$1
@@ -600,21 +588,9 @@ function lunch()
     fi
 
     local product=$(echo -n $selection | sed -e "s/-.*$//")
-    check_product $product
     TARGET_PRODUCT=$product \
     TARGET_BUILD_VARIANT=$variant \
     build_build_var_cache
-    if [ $? -ne 0 ]
-    then
-         # if we can't find a product, try to grab it off the ScrewdAOSP github
-        T=$(gettop)
-        pushd $T > /dev/null
-        build/tools/roomservice.py $product
-        popd > /dev/null
-        check_product $product
-    else
-        build/tools/roomservice.py $product true
-    fi
     if [ $? -ne 0 ]
     then
         echo
@@ -1508,22 +1484,7 @@ function godir () {
     \cd $T/$pathname
 }
 
-function mka() {
-    case `uname -s` in
-        Darwin)
-            make -j `sysctl hw.ncpu|cut -d" " -f2` "$@"
-            ;;
-        *)
-            schedtool -B -n 1 -e ionice -n 1 make -j$(cat /proc/cpuinfo | grep "^processor" | wc -l) "$@"
-            ;;
-    esac
-}
-
-# Force JAVA_HOME to point to java 1.7 if it isn't already set.
-#
-# Note that the MacOS path for java 1.7 includes a minor revision number (sigh).
-# For some reason, installing the JDK doesn't make it show up in the
-# JavaVM.framework/Versions/1.7/ folder.
+# Force JAVA_HOME to point to java 1.7/1.8 if it isn't already set.
 function set_java_home() {
     # Clear the existing JAVA_HOME value if we set it ourselves, so that
     # we can reset it later, depending on the version of java the build
@@ -1581,10 +1542,10 @@ function get_make_command()
   echo command make
 }
 
-function mk_timer()
+function make()
 {
     local start_time=$(date +"%s")
-    $@
+    $(get_make_command) "$@"
     local ret=$?
     local end_time=$(date +"%s")
     local tdiff=$(($end_time-$start_time))
@@ -1616,7 +1577,6 @@ function mk_timer()
     fi
     echo " ####${color_reset}"
     echo
-    prebuilts/sdk/tools/jack-admin stop-server 2>&1 >/dev/null
     return $ret
 }
 
@@ -1649,11 +1609,6 @@ function provision()
     "$ANDROID_PRODUCT_OUT/provision-device" "$@"
 }
 
-function make()
-{
-    mk_timer $(get_make_command) "$@"
-}
-
 if [ "x$SHELL" != "x/bin/bash" ]; then
     case `ps -o command -p $$` in
         *bash*)
@@ -1675,5 +1630,3 @@ done
 unset f
 
 addcompletions
-
-export ANDROID_BUILD_TOP=$(gettop)

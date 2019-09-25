@@ -23,9 +23,6 @@ DEX_PREOPT_DEFAULT ?= true
 # being used). To bundle everything one should set this to '%'
 SYSTEM_OTHER_ODEX_FILTER ?= app/% priv-app/%
 
-# Method returning whether the install path $(1) should be for system_other.
-install-on-system-other = $(filter-out $(PRODUCT_SYSTEM_SERVER_APPS),$(basename $(notdir $(filter $(foreach f,$(SYSTEM_OTHER_ODEX_FILTER),$(TARGET_OUT)/$(f)),$(1)))))
-
 # The default values for pre-opting: always preopt PIC.
 # Conditional to building on linux, as dex2oat currently does not work on darwin.
 ifeq ($(HOST_OS),linux)
@@ -36,8 +33,8 @@ ifeq ($(HOST_OS),linux)
   ifeq (eng,$(TARGET_BUILD_VARIANT))
     WITH_DEXPREOPT_BOOT_IMG_ONLY ?= true
   endif
-# Add mini-debug-info to the boot classpath if explicitly asked to do so.
-  ifeq (true,$(WITH_DEXPREOPT_DEBUG_INFO))
+# Add mini-debug-info to the boot classpath unless explicitly asked not to.
+  ifneq (false,$(WITH_DEXPREOPT_DEBUG_INFO))
     PRODUCT_DEX_PREOPT_BOOT_FLAGS += --generate-mini-debug-info
   endif
 endif

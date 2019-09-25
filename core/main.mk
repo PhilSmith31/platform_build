@@ -91,10 +91,6 @@ ifneq ($(filter $(dont_bother_goals), $(MAKECMDGOALS)),)
 dont_bother := true
 endif
 
-ifeq ($(MAKECMDGOALS),kernelclean)
-dont_bother := true
-endif
-
 ORIGINAL_MAKECMDGOALS := $(MAKECMDGOALS)
 
 # Targets that provide quick help on the build system.
@@ -127,8 +123,8 @@ endif
 $(shell mkdir -p $(OUT_DIR) && \
     echo -n $(BUILD_NUMBER) > $(OUT_DIR)/build_number.txt && \
     echo -n $(BUILD_DATETIME) > $(OUT_DIR)/build_date.txt)
-BUILD_NUMBER_FROM_FILE := $(shell cat $(OUT_DIR)/build_number.txt)
-BUILD_DATETIME_FROM_FILE := $(shell cat $(OUT_DIR)/build_date.txt)
+BUILD_NUMBER_FROM_FILE := $$(cat $(OUT_DIR)/build_number.txt)
+BUILD_DATETIME_FROM_FILE := $$(cat $(OUT_DIR)/build_date.txt)
 ifeq ($(HOST_OS),darwin)
 DATE_FROM_FILE := date -r $(BUILD_DATETIME_FROM_FILE)
 else
@@ -213,6 +209,39 @@ $(info $(space)$(space)$(space)$(space)https://source.android.com/source/initial
 $(info ************************************************************)
 $(error stop)
 endif
+
+# Check for the current JDK.
+#
+# For Java 1.7/1.8, we require OpenJDK on linux and Oracle JDK on Mac OS.
+requires_openjdk := false
+ifeq ($(BUILD_OS),linux)
+requires_openjdk := true
+endif
+
+
+# Check for the current jdk
+ifeq ($(requires_openjdk), true)
+# The user asked for openjdk, so check that the host
+# java version is really openjdk and not some other JDK.
+ifeq ($(shell echo '$(java_version_str)' | grep -i openjdk),)
+$(info ************************************************************)
+$(info You asked for an OpenJDK based build but your version is)
+$(info $(java_version_str).)
+$(info ************************************************************)
+$(error stop)
+endif # java version is not OpenJdk
+else # if requires_openjdk
+ifneq ($(shell echo '$(java_version_str)' | grep -i openjdk),)
+$(info ************************************************************)
+$(info You are attempting to build with an unsupported JDK.)
+$(info $(space))
+$(info You use OpenJDK but only Sun/Oracle JDK is supported.)
+$(info Please follow the machine setup instructions at)
+$(info $(space)$(space)$(space)$(space)https://source.android.com/source/download.html)
+$(info ************************************************************)
+$(error stop)
+endif # java version is not Sun Oracle JDK
+endif # if requires_openjdk
 
 KNOWN_INCOMPATIBLE_JAVAC_VERSIONS := google
 incompat_javac := $(foreach v,$(KNOWN_INCOMPATIBLE_JAVAC_VERSIONS),$(findstring $(v),$(javac_version_str)))
@@ -381,7 +410,7 @@ ifneq (,$(user_variant))
 
 else # !user_variant
   # Turn on checkjni for non-user builds.
-  # ADDITIONAL_BUILD_PROPERTIES += ro.kernel.android.checkjni=1
+  ADDITIONAL_BUILD_PROPERTIES += ro.kernel.android.checkjni=1
   # Set device insecure for non-user builds.
   ADDITIONAL_DEFAULT_PROPERTIES += ro.secure=0
   # Allow mock locations by default for non user builds
@@ -392,7 +421,7 @@ ifeq (true,$(strip $(enable_target_debugging)))
   # Target is more debuggable and adbd is on by default
   ADDITIONAL_DEFAULT_PROPERTIES += ro.debuggable=1
   # Enable Dalvik lock contention logging.
-  #ADDITIONAL_BUILD_PROPERTIES += dalvik.vm.lockprof.threshold=500
+  ADDITIONAL_BUILD_PROPERTIES += dalvik.vm.lockprof.threshold=500
   # Include the debugging/testing OTA keys in this build.
   INCLUDE_TEST_OTA_KEYS := true
 else # !enable_target_debugging
@@ -487,12 +516,7 @@ endif
 ifneq ($(ONE_SHOT_MAKEFILE),)
 # We've probably been invoked by the "mm" shell function
 # with a subdirectory's makefile.
-
-# No Makefiles to include if we are performing a mms/short-circuit build. Only
-# the targets mentioned by main.mk and tasks/* are built (kernel, boot.img etc)
-ifneq ($(ONE_SHOT_MAKEFILE),__none__)
 include $(ONE_SHOT_MAKEFILE)
-endif
 # Change CUSTOM_MODULES to include only modules that were
 # defined by this makefile; this will install all of those
 # modules as a side-effect.  Do this after including ONE_SHOT_MAKEFILE
@@ -528,7 +552,7 @@ ifeq ($(USE_SOONG),true)
 subdir_makefiles := $(SOONG_ANDROID_MK) $(call filter-soong-makefiles,$(subdir_makefiles))
 endif
 
-$(foreach mk, $(subdir_makefiles), $(eval include $(mk)))
+$(foreach mk, $(subdir_makefiles),$(info including $(mk) ...)$(eval include $(mk)))
 
 ifdef PDK_FUSION_PLATFORM_ZIP
 # Bring in the PDK platform.zip modules.
@@ -1078,7 +1102,7 @@ $(foreach module,$(sample_MODULES),$(eval $(call \
 sample_ADDITIONAL_INSTALLED := \
         $(filter-out $(modules_to_install) $(modules_to_check) $(ALL_PREBUILT),$(sample_MODULES))
 samplecode: $(sample_APKS_COLLECTION)
-	@echo -e ${CL_GRN}"Collect sample code apks:"${CL_RST}" $^"
+	@echo "Collect sample code apks: $^"
 	# remove apks that are not intended to be installed.
 	rm -f $(sample_ADDITIONAL_INSTALLED)
 endif  # samplecode in $(MAKECMDGOALS)
@@ -1088,8 +1112,8 @@ findbugs: $(INTERNAL_FINDBUGS_HTML_TARGET) $(INTERNAL_FINDBUGS_XML_TARGET)
 
 .PHONY: clean
 clean:
-	@rm -rf $(OUT_DIR)/* $(OUT_DIR)/..?* $(OUT_DIR)/.[!.]*
-	@echo -e ${CL_GRN}"Entire build directory removed."${CL_RST}
+	@rm -rf $(OUT_DIR)/*
+	@echo "Entire build directory removed."
 
 .PHONY: clobber
 clobber: clean
@@ -1099,16 +1123,9 @@ clobber: clean
 #xxx scrape this from ALL_MODULE_NAME_TAGS
 .PHONY: modules
 modules:
-	@echo -e ${CL_GRN}"Available sub-modules:"${CL_RST}
+	@echo "Available sub-modules:"
 	@echo "$(call module-names-for-tag-list,$(ALL_MODULE_TAGS))" | \
 	      tr -s ' ' '\n' | sort -u | $(COLUMN)
-
-.PHONY: kernelclean
-kernelclean:
-	@rm -rf $(OUT_DIR)/target/product/*/kernel
-	@rm -rf $(OUT_DIR)/target/product/*/boot.img
-	@rm -rf $(OUT_DIR)/target/product/*/obj/KERNEL_OBJ
-	@echo -e ${CL_GRN}"All kernel compnents have been erased"${CL_RST}
 
 .PHONY: showcommands
 showcommands:

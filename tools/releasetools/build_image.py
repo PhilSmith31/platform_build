@@ -169,14 +169,6 @@ def BuildVerityTree(sparse_image_path, verity_image_path, prop_dict):
 
 def BuildVerityMetadata(image_size, verity_metadata_path, root_hash, salt,
                         block_device, signer_path, key, signer_args):
-  verity_key = os.getenv("PRODUCT_VERITY_KEY", None)
-  verity_key_password = None
-
-  if verity_key and os.path.exists(verity_key+".pk8"):
-    verity_key_passwords = {}
-    verity_key_passwords.update(common.PasswordManager().GetPasswords(verity_key.split()))
-    verity_key_password = verity_key_passwords[verity_key]
-
   cmd_template = (
       "system/extras/verity/build_verity_metadata.py build " +
       "%s %s %s %s %s %s %s")
@@ -185,19 +177,10 @@ def BuildVerityMetadata(image_size, verity_metadata_path, root_hash, salt,
   if signer_args:
     cmd += " --signer_args=\"%s\"" % (' '.join(signer_args),)
   print cmd
-  runcmd = [str(a) for a in ["system/extras/verity/build_verity_metadata.py", "build", image_size, verity_metadata_path, root_hash, salt, block_device, signer_path, key]];
-  if verity_key_password is not None:
-    sp = subprocess.Popen(runcmd, stdin=subprocess.PIPE)
-    sp.communicate(verity_key_password)
-  else:
-    sp = subprocess.Popen(runcmd)
-
-  sp.wait()
-
-  if sp.returncode != 0:
-    print("Could not build verity metadata!")
+  status, output = commands.getstatusoutput(cmd)
+  if status:
+    print "Could not build verity metadata! Error: %s" % output
     return False
-
   return True
 
 def Append2Simg(sparse_image_path, unsparse_image_path, error_message):
@@ -399,13 +382,9 @@ def BuildImage(in_dir, prop_dict, out_file, target_out=None):
     build_command = ["mkuserimg.sh"]
     if "extfs_sparse_flag" in prop_dict:
       build_command.append(prop_dict["extfs_sparse_flag"])
-      #run_fsck = True
-    if "is_userdataextra" in prop_dict:
-      build_command.extend([in_dir, out_file, fs_type,
-                           "data"])
-    else:
-      build_command.extend([in_dir, out_file, fs_type,
-                            prop_dict["mount_point"]])
+      run_fsck = True
+    build_command.extend([in_dir, out_file, fs_type,
+                          prop_dict["mount_point"]])
     build_command.append(prop_dict["partition_size"])
     if "journal_size" in prop_dict:
       build_command.extend(["-j", prop_dict["journal_size"]])
@@ -615,11 +594,6 @@ def ImagePropFromGlobalDict(glob_dict, mount_point):
     copy_prop("fs_type", "fs_type")
     copy_prop("userdata_fs_type", "fs_type")
     copy_prop("userdata_size", "partition_size")
-  elif mount_point == "data_extra":
-    copy_prop("fs_type", "fs_type")
-    copy_prop("userdataextra_size", "partition_size")
-    copy_prop("userdataextra_name", "partition_name")
-    d["is_userdataextra"] = True
   elif mount_point == "cache":
     copy_prop("cache_fs_type", "fs_type")
     copy_prop("cache_size", "partition_size")

@@ -22,6 +22,7 @@ PRODUCT_PACKAGES := \
     BluetoothMidiService \
     Camera2 \
     Gallery2 \
+    Music \
     MusicFX \
     OneTimeInitializer \
     Provision \
@@ -36,7 +37,12 @@ PRODUCT_PACKAGES += \
     screenrecord
 
 PRODUCT_PACKAGES += \
-    librs_jni
+    librs_jni \
+    libvideoeditor_jni \
+    libvideoeditor_core \
+    libvideoeditor_osal \
+    libvideoeditor_videofilters \
+    libvideoeditorplayer \
 
 PRODUCT_PACKAGES += \
     audio.primary.default \

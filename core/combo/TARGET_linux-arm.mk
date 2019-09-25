@@ -97,7 +97,7 @@ ifeq ($(FORCE_ARM_DEBUGGING),true)
 endif
 
 $(combo_2nd_arch_prefix)TARGET_GLOBAL_CFLAGS += \
-			-mfloat-abi=softfp \
+			-msoft-float \
 			-ffunction-sections \
 			-fdata-sections \
 			-funwind-tables \

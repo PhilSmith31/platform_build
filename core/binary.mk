@@ -30,15 +30,6 @@ else
   endif
 endif
 
-# Many qcom modules don't correctly set a dependency on the kernel headers. Fix it for them,
-# but warn the user.
-ifneq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include,$(LOCAL_C_INCLUDES)))
-  ifeq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr,$(LOCAL_ADDITIONAL_DEPENDENCIES)))
-    $(warning $(LOCAL_MODULE) uses kernel headers, but does not depend on them!)
-    LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
-  endif
-endif
-
 # The following LOCAL_ variables will be modified in this file.
 # Because the same LOCAL_ variables may be used to define modules for both 1st arch and 2nd arch,
 # we can't modify them in place.
@@ -218,8 +209,6 @@ ifdef LOCAL_CLANG_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)
 my_clang := $(strip $(LOCAL_CLANG_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)))
 endif
 
-my_sdclang := $(strip $(LOCAL_SDCLANG))
-
 # clang is enabled by default for host builds
 # enable it unless we've specifically disabled clang above
 ifdef LOCAL_IS_HOST_MODULE
@@ -261,12 +250,6 @@ endif
 
 my_cppflags := $(my_cpp_std_version) $(my_cppflags)
 
-
-ifeq ($(SDCLANG),true)
-    ifeq ($(my_sdclang),)
-        my_sdclang := true
-    endif
-endif
 
 # arch-specific static libraries go first so that generic ones can depend on them
 my_static_libraries := $(LOCAL_STATIC_LIBRARIES_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)) $(LOCAL_STATIC_LIBRARIES_$(my_32_64_bit_suffix)) $(my_static_libraries)
@@ -311,32 +294,10 @@ ifneq ($(filter true always, $(LOCAL_FDO_SUPPORT)),)
     my_cflags += $($(LOCAL_2ND_ARCH_VAR_PREFIX)TARGET_FDO_OPTIMIZE_CFLAGS)
     my_fdo_build := true
   endif
-  # Disable ccache (or other compiler wrapper) except gomacc, unless
-  # it can handle -fprofile-use properly.
-
-  # ccache supports -fprofile-use as of version 3.2. Parse the version output
-  # of each wrapper to determine if it's ccache 3.2 or newer.
-  is_cc_ccache := $(shell if [ "`$(my_cc_wrapper) -V 2>/dev/null | head -1 | cut -d' ' -f1`" = ccache ]; then echo true; fi)
-  ifeq ($(is_cc_ccache),true)
-    cc_ccache_version := $(shell $(my_cc_wrapper) -V | head -1 | grep -o '[[:digit:]]\+\.[[:digit:]]\+')
-    vmajor := $(shell echo $(cc_ccache_version) | cut -d'.' -f1)
-    vminor := $(shell echo $(cc_ccache_version) | cut -d'.' -f2)
-    cc_ccache_ge_3_2 = $(shell if [ $(vmajor) -gt 3 -o $(vmajor) -eq 3 -a $(vminor) -ge 2 ]; then echo true; fi)
-  endif
-  is_cxx_ccache := $(shell if [ "`$(my_cxx_wrapper) -V 2>/dev/null | head -1 | cut -d' ' -f1`" = ccache ]; then echo true; fi)
-  ifeq ($(is_cxx_ccache),true)
-    cxx_ccache_version := $(shell $(my_cxx_wrapper) -V | head -1 | grep -o '[[:digit:]]\+\.[[:digit:]]\+')
-    vmajor := $(shell echo $(cxx_ccache_version) | cut -d'.' -f1)
-    vminor := $(shell echo $(cxx_ccache_version) | cut -d'.' -f2)
-    cxx_ccache_ge_3_2 = $(shell if [ $(vmajor) -gt 3 -o $(vmajor) -eq 3 -a $(vminor) -ge 2 ]; then echo true; fi)
-  endif
-
-  ifneq ($(cc_ccache_ge_3_2),true)
-    my_cc_wrapper := $(filter $(GOMA_CC),$(my_cc_wrapper))
-  endif
-  ifneq ($(cxx_ccache_ge_3_2),true)
-    my_cxx_wrapper := $(filter $(GOMA_CC),$(my_cxx_wrapper))
-  endif
+  # Disable ccache (or other compiler wrapper) except gomacc, which
+  # can handle -fprofile-use properly.
+  my_cc_wrapper := $(filter $(GOMA_CC),$(my_cc_wrapper))
+  my_cxx_wrapper := $(filter $(GOMA_CC),$(my_cxx_wrapper))
 endif
 
 ###########################################################
@@ -365,30 +326,6 @@ my_target_global_cflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_CFL
 my_target_global_conlyflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_CONLYFLAGS)
 my_target_global_cppflags += $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_CPPFLAGS)
 my_target_global_ldflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_LDFLAGS)
-    ifeq ($(my_sdclang),true)
-        SDCLANG_PRECONFIGURED_FLAGS := -Wno-vectorizer-no-neon
-
-        ifeq ($(LOCAL_SDCLANG_LTO), true)
-            ifneq ($(LOCAL_MODULE_CLASS), STATIC_LIBRARIES)
-                SDCLANG_PRECONFIGURED_FLAGS += -fuse-ld=qcld -flto
-            endif
-        endif
-
-        # Bundle our setup and add it to cflags
-        my_target_global_cflags += $(SDCLANG_COMMON_FLAGS) $(SDCLANG_PRECONFIGURED_FLAGS)
-
-        # Pass all cflags and module specific LTO flags to linker
-        my_target_global_ldflags += $(my_target_global_cflags) $(LOCAL_SDCLANG_LTO_LDFLAGS)
-
-        SDCLANG_PRECONFIGURED_FLAGS :=
-
-        ifeq ($(strip $(my_cc)),)
-            my_cc := $(my_cc_wrapper) $(SDCLANG_PATH)/clang
-        endif
-        ifeq ($(strip $(my_cxx)),)
-            my_cxx := $(my_cxx_wrapper) $(SDCLANG_PATH)/clang++
-        endif
-    endif
 else
 my_target_global_cflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CFLAGS)
 my_target_global_conlyflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CONLYFLAGS)
@@ -718,25 +655,13 @@ proto_sources_fullpath := $(addprefix $(LOCAL_PATH)/, $(proto_sources))
 proto_generated_cpps := $(addprefix $(proto_gen_dir)/, \
     $(patsubst %.proto,%.pb$(my_proto_source_suffix),$(proto_sources_fullpath)))
 
-define copy-proto-files
-$(if $(PRIVATE_PROTOC_OUTPUT), \
-   $(if $(call streq,$(PRIVATE_PROTOC_INPUT),$(PRIVATE_PROTOC_OUTPUT)),, \
-   $(eval proto_generated_path := $(dir $(subst $(PRIVATE_PROTOC_INPUT),$(PRIVATE_PROTOC_OUTPUT),$@)))
-   @mkdir -p $(dir $(proto_generated_path))
-   @echo "Protobuf relocation: $(basename $@).h => $(proto_generated_path)"
-   @cp -f $(basename $@).h $(proto_generated_path) ),)
-endef
-
 # Ensure the transform-proto-to-cc rule is only defined once in multilib build.
 ifndef $(my_host)$(LOCAL_MODULE_CLASS)_$(LOCAL_MODULE)_proto_defined
 $(proto_generated_cpps): PRIVATE_PROTO_INCLUDES := $(TOP)
 $(proto_generated_cpps): PRIVATE_PROTOC_FLAGS := $(LOCAL_PROTOC_FLAGS) $(my_protoc_flags)
-$(proto_generated_cpps): PRIVATE_PROTOC_OUTPUT := $(LOCAL_PROTOC_OUTPUT)
-$(proto_generated_cpps): PRIVATE_PROTOC_INPUT := $(LOCAL_PATH)
 $(proto_generated_cpps): PRIVATE_RENAME_CPP_EXT := $(my_rename_cpp_ext)
 $(proto_generated_cpps): $(proto_gen_dir)/%.pb$(my_proto_source_suffix): %.proto $(my_protoc_deps) $(PROTOC)
 	$(transform-proto-to-cc)
-	$(copy-proto-files)
 
 $(my_host)$(LOCAL_MODULE_CLASS)_$(LOCAL_MODULE)_proto_defined := true
 endif
@@ -1248,7 +1173,7 @@ import_includes_deps := $(strip \
       $(call intermediates-dir-for,STATIC_LIBRARIES,$(l),$(LOCAL_IS_HOST_MODULE),,$(LOCAL_2ND_ARCH_VAR_PREFIX),$(my_host_cross))/export_includes))
 $(import_includes): PRIVATE_IMPORT_EXPORT_INCLUDES := $(import_includes_deps)
 $(import_includes) : $(LOCAL_MODULE_MAKEFILE_DEP) $(import_includes_deps)
-	@echo -e ${CL_CYN}Import includes file:${CL_RST} $@
+	@echo Import includes file: $@
 	$(hide) mkdir -p $(dir $@) && rm -f $@
 ifdef import_includes_deps
 	$(hide) for f in $(PRIVATE_IMPORT_EXPORT_INCLUDES); do \
@@ -1301,11 +1226,6 @@ $(foreach f,$(my_tracked_gen_files),$(eval my_src_file_gen_$(s):=))
 my_tracked_gen_files :=
 $(foreach f,$(my_tracked_src_files),$(eval my_src_file_obj_$(s):=))
 my_tracked_src_files :=
-
-## Allow a device's own headers to take precedence over global ones
-ifneq ($(TARGET_SPECIFIC_HEADER_PATH),)
-my_c_includes := $(TOPDIR)$(TARGET_SPECIFIC_HEADER_PATH) $(my_c_includes)
-endif
 
 my_c_includes += $(TOPDIR)$(LOCAL_PATH) $(intermediates) $(generated_sources_dir)
 
@@ -1498,7 +1418,7 @@ $(export_includes): PRIVATE_EXPORT_C_INCLUDE_DIRS := $(my_export_c_include_dirs)
 # By adding $(my_generated_sources) it makes sure the headers get generated
 # before any dependent source files get compiled.
 $(export_includes) : $(my_generated_sources) $(export_include_deps)
-	@echo -e ${CL_CYN}Export includes file:${CL_RST} $< -- $@
+	@echo Export includes file: $< -- $@
 	$(hide) mkdir -p $(dir $@) && rm -f $@.tmp
 ifdef my_export_c_include_dirs
 	$(hide) for d in $(PRIVATE_EXPORT_C_INCLUDE_DIRS); do \

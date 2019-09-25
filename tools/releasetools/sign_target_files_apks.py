@@ -246,10 +246,6 @@ def ProcessTargetFiles(input_tf_zip, output_tf_zip, misc_info,
       print "rewriting %s with new keys." % (info.filename,)
       new_data = ReplaceCerts(data)
       common.ZipWriteStr(output_tf_zip, out_info, new_data)
-    elif info.filename.startswith("SYSTEM/etc/permissions/"):
-      print("rewriting %s with new keys." % info.filename)
-      new_data = ReplaceCerts(data)
-      common.ZipWriteStr(output_tf_zip, out_info, new_data)
 
     # Trigger a rebuild of the recovery patch if needed.
     elif info.filename in ("SYSTEM/recovery-from-boot.p",
@@ -419,7 +415,7 @@ def RewriteProps(data, misc_info):
         value = "/".join(pieces)
       elif key == "ro.build.description":
         pieces = value.split(" ")
-        #assert len(pieces) == 5
+        assert len(pieces) == 5
         pieces[-1] = EditTags(pieces[-1])
         value = " ".join(pieces)
       elif key == "ro.build.tags":
@@ -732,5 +728,3 @@ if __name__ == '__main__':
     print "   ERROR: %s" % (e,)
     print
     sys.exit(1)
-  finally:
-    common.Cleanup()
