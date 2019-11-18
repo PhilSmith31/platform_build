@@ -18,4 +18,3 @@ else
 	arch_variant_ldflags += -Wl,--no-fix-cortex-a53-835769
 	RS_DISABLE_A53_WORKAROUND := true
 endif
-
